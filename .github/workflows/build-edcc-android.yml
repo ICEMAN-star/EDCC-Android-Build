@@ -12,40 +12,91 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
+      # 3. Install Android NDK and CMake
       - name: Install Android NDK and CMake
         run: |
+          set -e
+
           sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
 
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-      - name: Extract source archives
-        run: |
-          mkdir -p work/edcc work/opencv
-          unzip -q "EDCC-Palmprint-Recognition-master (1).zip" -d work/edcc
-          unzip -q "opencv-mobile-3.4.20-android.zip" -d work/opencv
+          test -f "$SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
 
+      # 4. Download and extract archives
+      - name: Download and Extract source archives
+        run: |
+          set -e
+
+          mkdir -p work/edcc work/opencv
+
+          echo "Checking EDCC archive..."
+
+          unzip -t "EDCC-Palmprint-Recognition-master (1).zip"
+
+          echo "Downloading official OpenCV Mobile 3.4.20..."
+
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://github.com/nihui/opencv-mobile/releases/latest/download/opencv-mobile-3.4.20-android.zip" \
+            -o opencv-mobile-3.4.20-android.zip
+
+          echo "Checking OpenCV archive..."
+
+          unzip -t opencv-mobile-3.4.20-android.zip
+
+          echo "Extracting EDCC..."
+
+          unzip -q "EDCC-Palmprint-Recognition-master (1).zip" -d work/edcc
+
+          echo "Extracting OpenCV..."
+
+          unzip -q opencv-mobile-3.4.20-android.zip -d work/opencv
+
+          echo "Archives extracted successfully."
+
+      # 5. Locate EDCC and OpenCV
       - name: Locate source and OpenCV
         run: |
-          EDCC_ROOT=$(find work/edcc -name CMakeLists.txt -print -quit | xargs dirname)
-          OPENCV_CONFIG=$(find work/opencv -path '*/jni/OpenCVConfig.cmake' -print -quit)
+          set -e
 
-          echo "EDCC_ROOT=$EDCC_ROOT" >> "$GITHUB_ENV"
-          echo "OpenCV_DIR=$(dirname "$OPENCV_CONFIG")" >> "$GITHUB_ENV"
+          EDCC_ROOT=$(find work/edcc -name CMakeLists.txt -print -quit | xargs dirname)
+
+          OPENCV_CONFIG=$(find work/opencv \
+            -path '*/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
+            -print -quit)
+
+          if [ -z "$OPENCV_CONFIG" ]; then
+            OPENCV_CONFIG=$(find work/opencv \
+              -path '*/jni/OpenCVConfig.cmake' \
+              -print -quit)
+          fi
+
+          echo "EDCC root: $EDCC_ROOT"
+          echo "OpenCV config: $OPENCV_CONFIG"
 
           test -f "$EDCC_ROOT/CMakeLists.txt"
           test -f "$OPENCV_CONFIG"
 
+          echo "EDCC_ROOT=$EDCC_ROOT" >> "$GITHUB_ENV"
+          echo "OpenCV_DIR=$(dirname "$OPENCV_CONFIG")" >> "$GITHUB_ENV"
+
+      # 6. Configure EDCC
       - name: Configure EDCC
         run: |
+          set -e
+
           cmake -S "$EDCC_ROOT" -B build-edcc \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
@@ -55,15 +106,30 @@ jobs:
             -DEDCC_BUILD_TESTS=OFF \
             -DEDCC_BUILD_DEV=OFF
 
+      # 7. Build EDCC
       - name: Build EDCC
         run: |
+          set -e
+
           cmake --build build-edcc --config Release --parallel 2
 
+      # 8. Verify generated library
       - name: Verify library
         run: |
-          find build-edcc -name 'libedcc.a' -print
-          test -n "$(find build-edcc -name 'libedcc.a' -print -quit)"
+          set -e
 
+          echo "Searching for libedcc.a..."
+
+          find build-edcc -name 'libedcc.a' -print
+
+          LIBRARY=$(find build-edcc -name 'libedcc.a' -print -quit)
+
+          test -n "$LIBRARY"
+
+          echo "EDCC library successfully built:"
+          echo "$LIBRARY"
+
+      # 9. Upload generated library
       - name: Upload EDCC library
         uses: actions/upload-artifact@v4
         with:
