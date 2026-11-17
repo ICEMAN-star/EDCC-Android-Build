@@ -7,13 +7,9 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# EDCC source directory
 set(EDCC_ROOT "" CACHE PATH "EDCC source directory")
-
-# Previously built EDCC static library
 set(EDCC_LIBRARY "" CACHE FILEPATH "Path to libedcc.a")
 
-# Validate required paths
 if(NOT EXISTS "${EDCC_ROOT}/include/edcc/c_api.h")
     message(FATAL_ERROR "EDCC headers were not found: ${EDCC_ROOT}")
 endif()
@@ -22,20 +18,15 @@ if(NOT EXISTS "${EDCC_LIBRARY}")
     message(FATAL_ERROR "libedcc.a was not found: ${EDCC_LIBRARY}")
 endif()
 
-# Find Android OpenCV package
 find_package(OpenCV REQUIRED)
 
-# Import EDCC static library
 add_library(edcc STATIC IMPORTED GLOBAL)
 
 set_target_properties(edcc PROPERTIES
     IMPORTED_LOCATION "${EDCC_LIBRARY}"
 )
 
-# JNI shared library
-add_library(hadir_edcc SHARED
-    hadir_edcc_jni.cpp
-)
+add_library(hadir_edcc SHARED hadir_edcc_jni.cpp)
 
 target_include_directories(hadir_edcc PRIVATE
     "${EDCC_ROOT}/include"
@@ -43,19 +34,21 @@ target_include_directories(hadir_edcc PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 
-# Enable C++ exceptions for JNI error handling
 target_compile_options(hadir_edcc PRIVATE
     -fexceptions
 )
 
-# Link EDCC, OpenCV and Android logging
 target_link_libraries(hadir_edcc PRIVATE
     edcc
     ${OpenCV_LIBS}
+    omp
+    android
     log
+    z
+    dl
+    m
 )
 
-# Output library name: libhadir_edcc.so
 set_target_properties(hadir_edcc PROPERTIES
     OUTPUT_NAME "hadir_edcc"
 )
