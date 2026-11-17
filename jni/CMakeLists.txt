@@ -36,12 +36,17 @@ target_include_directories(hadir_edcc PRIVATE
 
 target_compile_options(hadir_edcc PRIVATE
     -fexceptions
+    -fopenmp
+)
+
+target_link_options(hadir_edcc PRIVATE
+    -fopenmp
+    -static-openmp
 )
 
 target_link_libraries(hadir_edcc PRIVATE
     edcc
     ${OpenCV_LIBS}
-    omp
     android
     log
     z
