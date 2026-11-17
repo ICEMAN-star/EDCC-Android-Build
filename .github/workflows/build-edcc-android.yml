@@ -1,18 +1,20 @@
 
-name: Build EDCC for Android
+name: Build Hadir EDCC for Android
 
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/build-edcc-android.yml'
+      - 'jni/**'
+      - 'EDCC-Palmprint-Recognition-master (1).zip'
 
 jobs:
   build:
     runs-on: ubuntu-24.04
 
     steps:
-      # 1. Checkout repository
+      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -35,7 +37,7 @@ jobs:
 
           test -f "$SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
 
-      # 4. Download and extract archives
+      # 4. Download and extract EDCC and OpenCV
       - name: Download and Extract source archives
         run: |
           set -e
@@ -43,6 +45,7 @@ jobs:
           mkdir -p work/edcc work/opencv
 
           echo "Checking EDCC archive..."
+
           unzip -t "EDCC-Palmprint-Recognition-master (1).zip"
 
           echo "Downloading OpenCV Mobile 3.4.20..."
@@ -52,22 +55,21 @@ jobs:
             -o opencv-mobile-3.4.20-android.zip
 
           echo "Checking OpenCV archive..."
+
           unzip -t opencv-mobile-3.4.20-android.zip
 
           echo "Extracting EDCC..."
+
           unzip -q "EDCC-Palmprint-Recognition-master (1).zip" -d work/edcc
 
           echo "Extracting OpenCV..."
+
           unzip -q opencv-mobile-3.4.20-android.zip -d work/opencv
 
-          echo "Extraction completed."
-
-      # 5. Locate EDCC and OpenCV using absolute paths
+      # 5. Locate EDCC and OpenCV
       - name: Locate source and OpenCV
         run: |
           set -e
-
-          echo "Searching for EDCC..."
 
           EDCC_CONFIG=$(find "$GITHUB_WORKSPACE/work/edcc" \
             -name CMakeLists.txt -print -quit)
@@ -76,8 +78,6 @@ jobs:
 
           EDCC_ROOT=$(dirname "$EDCC_CONFIG")
           EDCC_ROOT=$(realpath "$EDCC_ROOT")
-
-          echo "Searching for ARM64 OpenCV configuration..."
 
           OPENCV_CONFIG=$(find "$GITHUB_WORKSPACE/work/opencv" \
             -path '*/sdk/native/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
@@ -99,40 +99,32 @@ jobs:
           OPENCV_DIR=$(dirname "$OPENCV_CONFIG")
           OPENCV_DIR=$(realpath "$OPENCV_DIR")
 
-          echo "EDCC_ROOT=$EDCC_ROOT"
-          echo "OpenCV_DIR=$OPENCV_DIR"
-
-          echo "Checking OpenCV configuration..."
           test -f "$OPENCV_DIR/OpenCVConfig.cmake"
-
-          echo "Checking OpenCV module configuration..."
-          ls -la "$OPENCV_DIR"
 
           echo "EDCC_ROOT=$EDCC_ROOT" >> "$GITHUB_ENV"
           echo "OpenCV_DIR=$OPENCV_DIR" >> "$GITHUB_ENV"
 
-      # 6. Configure EDCC
+          echo "EDCC source: $EDCC_ROOT"
+          echo "OpenCV config: $OPENCV_DIR"
+
+      # 6. Configure EDCC static library
       - name: Configure EDCC
         run: |
           set -e
 
-          echo "Configuring EDCC for Android ARM64..."
-
-          echo "EDCC_ROOT=$EDCC_ROOT"
-          echo "OpenCV_DIR=$OpenCV_DIR"
-
-          test -f "$OpenCV_DIR/OpenCVConfig.cmake"
-
-          cmake -S "$EDCC_ROOT" -B "$GITHUB_WORKSPACE/build-edcc" \
+          cmake -S "$EDCC_ROOT" \
+            -B "$GITHUB_WORKSPACE/build-edcc" \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
             -DOpenCV_DIR="$OpenCV_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DEDCC_BUILD_SHARED_LIBS=OFF \
             -DEDCC_BUILD_TESTS=OFF \
             -DEDCC_BUILD_DEV=OFF
 
-      # 7. Build EDCC
+      # 7. Build EDCC static library
       - name: Build EDCC
         run: |
           set -e
@@ -140,28 +132,87 @@ jobs:
           cmake --build "$GITHUB_WORKSPACE/build-edcc" \
             --config Release --parallel 2
 
-      # 8. Verify generated library
-      - name: Verify library
+      # 8. Locate EDCC library
+      - name: Locate EDCC library
         run: |
           set -e
 
-          echo "Searching for libedcc.a..."
-
-          LIBRARY=$(find "$GITHUB_WORKSPACE/build-edcc" \
+          EDCC_LIBRARY=$(find "$GITHUB_WORKSPACE/build-edcc" \
             -name 'libedcc.a' -print -quit)
 
-          if [ -z "$LIBRARY" ]; then
+          if [ -z "$EDCC_LIBRARY" ]; then
             echo "ERROR: libedcc.a was not generated."
             exit 1
           fi
 
-          echo "SUCCESS: EDCC library generated."
-          echo "$LIBRARY"
+          EDCC_LIBRARY=$(realpath "$EDCC_LIBRARY")
 
-      # 9. Upload generated library
-      - name: Upload EDCC library
+          echo "EDCC_LIBRARY=$EDCC_LIBRARY" >> "$GITHUB_ENV"
+
+          echo "EDCC library: $EDCC_LIBRARY"
+
+      # 9. Configure JNI shared library
+      - name: Configure Hadir JNI
+        run: |
+          set -e
+
+          test -f "$GITHUB_WORKSPACE/jni/CMakeLists.txt"
+          test -f "$GITHUB_WORKSPACE/jni/hadir_edcc_jni.cpp"
+          test -f "$EDCC_LIBRARY"
+
+          cmake -S "$GITHUB_WORKSPACE/jni" \
+            -B "$GITHUB_WORKSPACE/build-jni" \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DOpenCV_DIR="$OpenCV_DIR" \
+            -DEDCC_ROOT="$EDCC_ROOT" \
+            -DEDCC_LIBRARY="$EDCC_LIBRARY" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+
+      # 10. Build JNI shared library
+      - name: Build Hadir JNI
+        run: |
+          set -e
+
+          cmake --build "$GITHUB_WORKSPACE/build-jni" \
+            --config Release --parallel 2
+
+      # 11. Verify and prepare output
+      - name: Verify and Package Libraries
+        run: |
+          set -e
+
+          JNI_LIBRARY=$(find "$GITHUB_WORKSPACE/build-jni" \
+            -name 'libhadir_edcc.so' -print -quit)
+
+          if [ -z "$JNI_LIBRARY" ]; then
+            echo "ERROR: libhadir_edcc.so was not generated."
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/dist/arm64-v8a"
+          mkdir -p "$GITHUB_WORKSPACE/dist/include"
+
+          cp "$JNI_LIBRARY" \
+            "$GITHUB_WORKSPACE/dist/arm64-v8a/"
+
+          cp "$EDCC_LIBRARY" \
+            "$GITHUB_WORKSPACE/dist/arm64-v8a/"
+
+          cp -R "$EDCC_ROOT/include/edcc" \
+            "$GITHUB_WORKSPACE/dist/include/"
+
+          echo "Generated files:"
+          find "$GITHUB_WORKSPACE/dist" -type f -print
+
+          echo "SUCCESS: Hadir EDCC JNI library generated."
+
+      # 12. Upload final Android artifact
+      - name: Upload Hadir EDCC Android
         uses: actions/upload-artifact@v4
         with:
-          name: EDCC-Android-arm64-v8a
-          path: build-edcc/**/libedcc.a
+          name: Hadir-EDCC-Android-arm64-v8a
+          path: dist/
           if-no-files-found: error
