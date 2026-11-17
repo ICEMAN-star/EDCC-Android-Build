@@ -43,7 +43,6 @@ jobs:
           mkdir -p work/edcc work/opencv
 
           echo "Checking EDCC archive..."
-
           unzip -t "EDCC-Palmprint-Recognition-master (1).zip"
 
           echo "Downloading OpenCV Mobile 3.4.20..."
@@ -53,57 +52,61 @@ jobs:
             -o opencv-mobile-3.4.20-android.zip
 
           echo "Checking OpenCV archive..."
-
           unzip -t opencv-mobile-3.4.20-android.zip
 
           echo "Extracting EDCC..."
-
           unzip -q "EDCC-Palmprint-Recognition-master (1).zip" -d work/edcc
 
           echo "Extracting OpenCV..."
-
           unzip -q opencv-mobile-3.4.20-android.zip -d work/opencv
 
           echo "Extraction completed."
 
-      # 5. Locate EDCC and ARM64 OpenCV
+      # 5. Locate EDCC and OpenCV using absolute paths
       - name: Locate source and OpenCV
         run: |
           set -e
 
           echo "Searching for EDCC..."
 
-          EDCC_ROOT=$(find work/edcc -name CMakeLists.txt -print -quit | xargs dirname)
+          EDCC_CONFIG=$(find "$GITHUB_WORKSPACE/work/edcc" \
+            -name CMakeLists.txt -print -quit)
+
+          test -n "$EDCC_CONFIG"
+
+          EDCC_ROOT=$(dirname "$EDCC_CONFIG")
+          EDCC_ROOT=$(realpath "$EDCC_ROOT")
 
           echo "Searching for ARM64 OpenCV configuration..."
 
-          OPENCV_CONFIG=$(find work/opencv \
+          OPENCV_CONFIG=$(find "$GITHUB_WORKSPACE/work/opencv" \
             -path '*/sdk/native/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
             -print -quit)
 
           if [ -z "$OPENCV_CONFIG" ]; then
-            OPENCV_CONFIG=$(find work/opencv \
+            OPENCV_CONFIG=$(find "$GITHUB_WORKSPACE/work/opencv" \
               -path '*/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
               -print -quit)
           fi
 
           if [ -z "$OPENCV_CONFIG" ]; then
             echo "ERROR: ARM64 OpenCV configuration not found."
-
-            echo "Available OpenCV configuration files:"
-
-            find work/opencv -name OpenCVConfig.cmake -print
-
+            find "$GITHUB_WORKSPACE/work/opencv" \
+              -name OpenCVConfig.cmake -print
             exit 1
           fi
 
           OPENCV_DIR=$(dirname "$OPENCV_CONFIG")
+          OPENCV_DIR=$(realpath "$OPENCV_DIR")
 
           echo "EDCC_ROOT=$EDCC_ROOT"
           echo "OpenCV_DIR=$OPENCV_DIR"
 
-          test -f "$EDCC_ROOT/CMakeLists.txt"
-          test -f "$OPENCV_CONFIG"
+          echo "Checking OpenCV configuration..."
+          test -f "$OPENCV_DIR/OpenCVConfig.cmake"
+
+          echo "Checking OpenCV module configuration..."
+          ls -la "$OPENCV_DIR"
 
           echo "EDCC_ROOT=$EDCC_ROOT" >> "$GITHUB_ENV"
           echo "OpenCV_DIR=$OPENCV_DIR" >> "$GITHUB_ENV"
@@ -115,11 +118,12 @@ jobs:
 
           echo "Configuring EDCC for Android ARM64..."
 
-          echo "OpenCV directory: $OpenCV_DIR"
+          echo "EDCC_ROOT=$EDCC_ROOT"
+          echo "OpenCV_DIR=$OpenCV_DIR"
 
           test -f "$OpenCV_DIR/OpenCVConfig.cmake"
 
-          cmake -S "$EDCC_ROOT" -B build-edcc \
+          cmake -S "$EDCC_ROOT" -B "$GITHUB_WORKSPACE/build-edcc" \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
@@ -133,9 +137,8 @@ jobs:
         run: |
           set -e
 
-          echo "Building EDCC..."
-
-          cmake --build build-edcc --config Release --parallel 2
+          cmake --build "$GITHUB_WORKSPACE/build-edcc" \
+            --config Release --parallel 2
 
       # 8. Verify generated library
       - name: Verify library
@@ -144,7 +147,8 @@ jobs:
 
           echo "Searching for libedcc.a..."
 
-          LIBRARY=$(find build-edcc -name 'libedcc.a' -print -quit)
+          LIBRARY=$(find "$GITHUB_WORKSPACE/build-edcc" \
+            -name 'libedcc.a' -print -quit)
 
           if [ -z "$LIBRARY" ]; then
             echo "ERROR: libedcc.a was not generated."
