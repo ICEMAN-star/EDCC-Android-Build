@@ -12,14 +12,17 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
+      # 3. Install Android NDK and CMake
       - name: Install Android NDK and CMake
         run: |
           set -e
@@ -32,6 +35,7 @@ jobs:
 
           test -f "$SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
 
+      # 4. Download and extract archives
       - name: Download and Extract source archives
         run: |
           set -e
@@ -39,6 +43,7 @@ jobs:
           mkdir -p work/edcc work/opencv
 
           echo "Checking EDCC archive..."
+
           unzip -t "EDCC-Palmprint-Recognition-master (1).zip"
 
           echo "Downloading OpenCV Mobile 3.4.20..."
@@ -48,32 +53,47 @@ jobs:
             -o opencv-mobile-3.4.20-android.zip
 
           echo "Checking OpenCV archive..."
+
           unzip -t opencv-mobile-3.4.20-android.zip
 
           echo "Extracting EDCC..."
+
           unzip -q "EDCC-Palmprint-Recognition-master (1).zip" -d work/edcc
 
           echo "Extracting OpenCV..."
+
           unzip -q opencv-mobile-3.4.20-android.zip -d work/opencv
 
           echo "Extraction completed."
 
+      # 5. Locate EDCC and ARM64 OpenCV
       - name: Locate source and OpenCV
         run: |
           set -e
 
           echo "Searching for EDCC..."
+
           EDCC_ROOT=$(find work/edcc -name CMakeLists.txt -print -quit | xargs dirname)
 
-          echo "Searching for main OpenCV configuration..."
-          find work/opencv -name OpenCVConfig.cmake -print
+          echo "Searching for ARM64 OpenCV configuration..."
 
           OPENCV_CONFIG=$(find work/opencv \
-            -path '*/sdk/native/jni/OpenCVConfig.cmake' \
+            -path '*/sdk/native/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
             -print -quit)
 
           if [ -z "$OPENCV_CONFIG" ]; then
-            echo "ERROR: Main OpenCVConfig.cmake was not found."
+            OPENCV_CONFIG=$(find work/opencv \
+              -path '*/jni/abi-arm64-v8a/OpenCVConfig.cmake' \
+              -print -quit)
+          fi
+
+          if [ -z "$OPENCV_CONFIG" ]; then
+            echo "ERROR: ARM64 OpenCV configuration not found."
+
+            echo "Available OpenCV configuration files:"
+
+            find work/opencv -name OpenCVConfig.cmake -print
+
             exit 1
           fi
 
@@ -82,23 +102,20 @@ jobs:
           echo "EDCC_ROOT=$EDCC_ROOT"
           echo "OpenCV_DIR=$OPENCV_DIR"
 
-          echo "Checking OpenCV ABI configuration..."
-          test -f "$OPENCV_DIR/abi-arm64-v8a/OpenCVConfig.cmake"
-
-          echo "Checking OpenCV ARM64 libraries..."
-          find "$(dirname "$(dirname "$(dirname "$OPENCV_DIR")")")" \
-            -name 'libopencv_core.a' -print
-
           test -f "$EDCC_ROOT/CMakeLists.txt"
+          test -f "$OPENCV_CONFIG"
 
           echo "EDCC_ROOT=$EDCC_ROOT" >> "$GITHUB_ENV"
           echo "OpenCV_DIR=$OPENCV_DIR" >> "$GITHUB_ENV"
 
+      # 6. Configure EDCC
       - name: Configure EDCC
         run: |
           set -e
 
-          echo "Using OpenCV_DIR=$OpenCV_DIR"
+          echo "Configuring EDCC for Android ARM64..."
+
+          echo "OpenCV directory: $OpenCV_DIR"
 
           test -f "$OpenCV_DIR/OpenCVConfig.cmake"
 
@@ -111,12 +128,16 @@ jobs:
             -DEDCC_BUILD_TESTS=OFF \
             -DEDCC_BUILD_DEV=OFF
 
+      # 7. Build EDCC
       - name: Build EDCC
         run: |
           set -e
 
+          echo "Building EDCC..."
+
           cmake --build build-edcc --config Release --parallel 2
 
+      # 8. Verify generated library
       - name: Verify library
         run: |
           set -e
@@ -130,8 +151,10 @@ jobs:
             exit 1
           fi
 
-          echo "SUCCESS: $LIBRARY"
+          echo "SUCCESS: EDCC library generated."
+          echo "$LIBRARY"
 
+      # 9. Upload generated library
       - name: Upload EDCC library
         uses: actions/upload-artifact@v4
         with:
